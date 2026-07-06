@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -500,6 +501,7 @@
     <button class="btn-ghost" onclick="document.getElementById('importInput').click()" style="font-size:.72rem;padding:6px 12px">📥</button>
     <input type="file" id="importInput" accept=".json" style="display:none" onchange="importBackup(event)">
     <div class="date-badge" id="dateBadge"></div>
+    <div class="date-badge" id="syncBadge" style="color:#3ddc84;border-color:#3ddc8444">⚡ Sincronizado</div>
   </div>
 </header>
 
@@ -971,6 +973,64 @@
   </div>
 </div>
 
+<script type="module">
+// ══ FIREBASE ══
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAbc4mRBh0b78XGRhK_T9Fjp0o-tKKC5G8",
+  authDomain: "life-intelligence-b6175.firebaseapp.com",
+  projectId: "life-intelligence-b6175",
+  storageBucket: "life-intelligence-b6175.firebasestorage.app",
+  messagingSenderId: "616288745589",
+  appId: "1:616288745589:web:dcd692cf9a47e66166e03c"
+};
+
+const fbApp = initializeApp(firebaseConfig);
+const db = getFirestore(fbApp);
+const USER_DOC = doc(db, 'users', 'felipe');
+
+let _firestoreSyncing = false;
+
+// Salva no Firestore (chamado após cada save())
+window._saveToFirestore = async function(data) {
+  try {
+    const badge = document.getElementById('syncBadge');
+    if (badge) { badge.textContent = '🔄 Salvando...'; badge.style.color = '#ffd166'; }
+    await setDoc(USER_DOC, { state: JSON.stringify(data), updatedAt: Date.now() });
+    if (badge) { badge.textContent = '⚡ Sincronizado'; badge.style.color = '#3ddc84'; badge.style.borderColor = '#3ddc8444'; }
+  } catch(e) {
+    const badge = document.getElementById('syncBadge');
+    if (badge) { badge.textContent = '⚠️ Offline'; badge.style.color = '#ff4d4d'; }
+    console.warn('Firestore save error:', e);
+  }
+};
+
+// Escuta mudanças em tempo real — se mudar em outro dispositivo, atualiza aqui
+onSnapshot(USER_DOC, (snap) => {
+  if (!snap.exists()) return;
+  try {
+    const remote = JSON.parse(snap.data().state);
+    const remoteTs = snap.data().updatedAt || 0;
+    const localTs = parseInt(localStorage.getItem('life-intelligence_ts') || '0');
+    // Só aplica se o dado remoto for mais novo que o local
+    if (remoteTs > localTs) {
+      _firestoreSyncing = true;
+      if (window.S && window.mergeStateSafely) {
+        window.mergeStateSafely(window.S, remote);
+        if (window.renderAll) window.renderAll();
+        if (window.showToast) window.showToast({ icon: '🔄', label: 'Sincronizado', title: 'Dados atualizados', sub: 'outro dispositivo' });
+      }
+      _firestoreSyncing = false;
+    }
+  } catch(e) {}
+});
+
+window._firestoreReady = true;
+console.log('Firebase conectado ✅');
+</script>
+
 <script>
 // ══ STATE ══
 // Schema padrão — fonte única da verdade sobre quais campos S deve ter e seus tipos.
@@ -991,6 +1051,7 @@ const DEFAULT_STATE = {
 };
 
 const S = { ...DEFAULT_STATE, exercicios: { 0:[],1:[],2:[],3:[],4:[],5:[],6:[] }, rotina: { manha:[], tarde:[], noite:[] } };
+window.S = S;
 
 const DIAS = ['Segunda','Terça','Quarta','Quinta','Sexta','Sábado','Domingo'];
 const today = new Date();
@@ -1066,14 +1127,24 @@ function save() {
   try { localStorage.setItem('life-intelligence_state', data); } catch(e) {}
   // Camada 2: IndexedDB
   saveIDB(S);
+  // Camada 3: Firestore (nuvem — sincroniza entre dispositivos)
+  const ts = Date.now();
+  try { localStorage.setItem('life-intelligence_ts', ts); } catch(e) {}
+  if (window._saveToFirestore) window._saveToFirestore(S);
   // Atualiza badge de último backup
-  const ts = new Date().toISOString();
-  try { localStorage.setItem('life-intelligence_last_save', ts); } catch(e) {}
+  const tsISO = new Date().toISOString();
+  try { localStorage.setItem('life-intelligence_last_save', tsISO); } catch(e) {}
   updateBackupBadge();
 }
 
+window.mergeStateSafely = mergeStateSafely;
+window.renderAll = function() { renderAll(); };
+window.showToast = function(opts) { showToast(opts); };
+
 async function load() {
-  // Tenta localStorage primeiro
+  // Tenta Firestore primeiro se disponível (dados mais recentes da nuvem)
+  // O onSnapshot já cuida da sincronização em tempo real depois do primeiro load
+  // Aqui tentamos localStorage/IDB pra ter dados imediatos enquanto Firestore carrega
   try {
     const ls = localStorage.getItem('life-intelligence_state');
     if (ls) { mergeStateSafely(S, JSON.parse(ls)); return; }
