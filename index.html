@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -6,7 +7,7 @@
 <title>Life Intelligence</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
-   
+
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
@@ -1012,18 +1013,22 @@ onSnapshot(USER_DOC, (snap) => {
   try {
     const remote = JSON.parse(snap.data().state);
     const remoteTs = snap.data().updatedAt || 0;
-    const localTs = parseInt(localStorage.getItem('life-intelligence_ts') || '0');
-    // Só aplica se o dado remoto for mais novo que o local
-    if (remoteTs > localTs) {
-      _firestoreSyncing = true;
-      if (window.S && window.mergeStateSafely) {
-        window.mergeStateSafely(window.S, remote);
-        if (window.renderAll) window.renderAll();
+    // Firestore é sempre a fonte da verdade — aplica sempre
+    if (window.S && window.mergeStateSafely) {
+      window.mergeStateSafely(window.S, remote);
+      // Atualiza localStorage com o timestamp remoto pra não conflitar
+      try { localStorage.setItem('life-intelligence_ts', remoteTs); } catch(e) {}
+      try { localStorage.setItem('life-intelligence_state', JSON.stringify(window.S)); } catch(e) {}
+      if (window.renderAll) window.renderAll();
+      // Toast só se o app já estiver carregado (não no primeiro load)
+      if (window._appReady) {
+        const badge = document.getElementById('syncBadge');
+        if (badge) { badge.textContent = '⚡ Sincronizado'; badge.style.color = '#3ddc84'; }
         if (window.showToast) window.showToast({ icon: '🔄', label: 'Sincronizado', title: 'Dados atualizados', sub: 'outro dispositivo' });
       }
-      _firestoreSyncing = false;
+      window._appReady = true;
     }
-  } catch(e) {}
+  } catch(e) { console.warn('onSnapshot error:', e); }
 });
 
 window._firestoreReady = true;
@@ -1170,7 +1175,7 @@ function exportBackup() {
   document.getElementById('backupBanner').innerHTML = '';
   showToast({ icon: '💾', label: 'Backup exportado', title: 'Salve no iCloud Drive', sub: `life-intelligence-backup-${date}.json` });
 }
-
+  
 function importBackup(e) {
   const file = e.target.files[0];
   if (!file) return;
